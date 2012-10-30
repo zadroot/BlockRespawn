@@ -20,10 +20,10 @@
 #define PLUGIN_VERSION  "1.0.1"
 #define MAX_SPAWNPOINTS 64
 
-static const String:pointentity[][] = {"info_player_allies","info_player_axis"};
+static const String:pointentity[][] = {"info_player_allies", "info_player_axis"};
 
 // ====[ VARIABLES ]=====================================================
-new Handle:blockchange_mode = INVALID_HANDLE,
+new	Handle:blockchange_mode = INVALID_HANDLE,
 	Float:spawnposition[2][MAX_SPAWNPOINTS][3],
 	sp_count[2],
 	g_iOffset_Origin;
@@ -42,7 +42,7 @@ public Plugin:myinfo =
 /* OnPluginStart()
  *
  * When the plugin starts up.
- * ----------------------------------------------------------------------- */
+ * ---------------------------------------------------------------------- */
 public OnPluginStart()
 {
 	// Create ConVars
@@ -51,13 +51,13 @@ public OnPluginStart()
 
 	// Returns the offset of the specified network property
 	if ((g_iOffset_Origin = FindSendPropOffs("CBaseEntity", "m_vecOrigin")) == -1)
-		SetFailState("Fatal Error: Unable to find prop offset \"CBaseEntity:m_vecOrigin\"!");
+		SetFailState("Fatal Error: Unable to find prop offset \"CBaseEntity::m_vecOrigin\"!");
 }
 
 /* OnMapStart()
  *
  * When the map starts.
- * ----------------------------------------------------------------------- */
+ * ---------------------------------------------------------------------- */
 public OnMapStart()
 {
 	for (new i = 0; i < sizeof(pointentity); i++)
@@ -81,7 +81,7 @@ public OnMapStart()
 /* OnJoinClass()
  *
  * Called when a player has executed a join class command.
- * ----------------------------------------------------------------------- */
+ * ---------------------------------------------------------------------- */
 public Action:OnJoinClass(client, &playerClass)
 {
 	// Checking if player alive and around respawn area
@@ -102,7 +102,7 @@ public Action:OnJoinClass(client, &playerClass)
 /* IsPlayerNearSpawn()
  *
  * Checks if player is around respawn area.
- * ----------------------------------------------------------------------- */
+ * ---------------------------------------------------------------------- */
 bool:IsPlayerNearSpawn(client)
 {
 	// When storing make sure you don't include the index then returns the client's origin vector
@@ -114,7 +114,7 @@ bool:IsPlayerNearSpawn(client)
 
 	for (new i = 0; i < sp_count[team]; i++)
 	{
-		// Yeah player is within a respawn area => check if distance from last spawn point is more than 500 units (float)
+		// Yeah player is within a respawn area - so check if distance from last spawn point is more than 500 units (float)
 		if (GetVectorDistance(spawnposition[team][i], distance) <= 500.0)
 			return true;
 	}
