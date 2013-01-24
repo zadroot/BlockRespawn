@@ -1,10 +1,10 @@
 /**
-* Block Class Respawn by Root
+* DoD:S Block Class Respawn by Root
 *
 * Description:
-*   Prevent class respawning within a respawn area (always or when player is hurt).
+*   Prevent immediately re-spawning after changing class (always or when player is hurt).
 *
-* Version 1.0.1
+* Version 2.0
 * Changelog & more info at http://goo.gl/4nKhJ
 */
 
@@ -12,28 +12,28 @@
 
 // ====[ INCLUDES ]======================================================
 #include <sourcemod>
-#include <sdktools_functions>
-#include <dodhooks>
 
 // ====[ CONSTANTS ]=====================================================
-#define PLUGIN_NAME     "Block Class Respawn"
-#define PLUGIN_VERSION  "1.0.1"
-#define MAX_SPAWNPOINTS 64
+#define PLUGIN_NAME     "DoD:S Block Class Respawn"
+#define PLUGIN_VERSION  "2.0"
 
-static const String:pointentity[][] = {"info_player_allies", "info_player_axis"};
+static const class_array[]    = { 6, 0, 0, 6 },
+	String:class_names[][]    = { "Rifleman", "Assault", "Support", "Sniper", "Machine Gunner", "Rocket" },
+	String:class_commands[][] =
+{
+	"cls_garand", "cls_tommy", "cls_bar",  "cls_spring", "cls_30cal", "cls_bazooka",
+	"cls_k98",    "cls_mp40",  "cls_mp44", "cls_k98s",   "cls_mg42",  "cls_pschreck"
+};
 
 // ====[ VARIABLES ]=====================================================
-new	Handle:blockchange_mode = INVALID_HANDLE,
-	Float:spawnposition[2][MAX_SPAWNPOINTS][3],
-	sp_count[2],
-	g_iOffset_Origin;
+new	Handle:blockchange_mode = INVALID_HANDLE;
 
 // ====[ PLUGIN ]========================================================
 public Plugin:myinfo =
 {
 	name        = PLUGIN_NAME,
 	author      = "Root",
-	description = "Prevent class respawning within a respawn area",
+	description = "Prevent immediately re-spawning after changing class",
 	version     = PLUGIN_VERSION,
 	url         = "http://dodsplugins.com/"
 };
@@ -46,35 +46,14 @@ public Plugin:myinfo =
 public OnPluginStart()
 {
 	// Create ConVars
-	CreateConVar("dod_blockrespawn_version", PLUGIN_VERSION, PLUGIN_NAME, FCVAR_NOTIFY|FCVAR_PLUGIN|FCVAR_SPONLY|FCVAR_REPLICATED);
-	blockchange_mode = CreateConVar("dod_blockrespawn", "1", "Specified when block class changing within a respawn area:\n1 - When player is hurt\n2 - All times", FCVAR_PLUGIN, true, 0.0, true, 2.0);
+	CreateConVar("dod_blockrespawn_version", PLUGIN_VERSION, PLUGIN_NAME, FCVAR_NOTIFY|FCVAR_PLUGIN|FCVAR_SPONLY);
+	blockchange_mode = CreateConVar("dod_blockrespawn", "1", "Determines when block immediately respawning after changing class within a respawn area:\n1 - When player is hurt\n2 - All times", FCVAR_PLUGIN, true, 0.0, true, 2.0);
 
-	// Returns the offset of the specified network property
-	if ((g_iOffset_Origin = FindSendPropOffs("CBaseEntity", "m_vecOrigin")) == -1)
-		SetFailState("Fatal Error: Unable to find prop offset \"CBaseEntity::m_vecOrigin\"!");
-}
-
-/* OnMapStart()
- *
- * When the map starts.
- * ---------------------------------------------------------------------- */
-public OnMapStart()
-{
-	for (new i = 0; i < sizeof(pointentity); i++)
+	// Get all commands that changing player class
+	for (new i = 0; i < sizeof(class_commands); i++)
 	{
-		// Team specified spawns entities: to start search set it to -1
-		new entity = -1;
-
-		// Every map has unique spawn points, so now we gonna reset all previous
-		sp_count[i] = 0;
-
-		// Searches for an entity by classname
-		while ((entity = FindEntityByClassname(entity, pointentity[i])) != -1)
-		{
-			// Got a number of spawnareas. Store all the info_player_* vectors in an array
-			if (sp_count[i] < MAX_SPAWNPOINTS)
-				GetEntDataVector(entity, g_iOffset_Origin, spawnposition[i][sp_count[i]++]);
-		}
+		// Using Reg*Cmd to intercept is in poor practice for already existing commands
+		AddCommandListener(OnJoinClass, class_commands[i]);
 	}
 }
 
@@ -82,42 +61,51 @@ public OnMapStart()
  *
  * Called when a player has executed a join class command.
  * ---------------------------------------------------------------------- */
-public Action:OnJoinClass(client, &playerClass)
+public Action:OnJoinClass(client, const String:command[], argc)
 {
-	// Checking if player alive and around respawn area
-	if (IsPlayerAlive(client) && IsPlayerNearSpawn(client))
+	// Make sure player is alive. Otherwise player may not respawn on joining team
+	if (IsPlayerAlive(client))
 	{
-		// Block re-spawning depends on mode (when player is hurt or block changing in respawn at all)
-		switch (GetConVarInt(blockchange_mode))
+		// Get client's team
+		new team = GetClientTeam(client);
+
+		// Define a HEX-color code depends on client's team. Needed to show colored player class
+		decl String:color[11];
+		Format(color, sizeof(color), "%s", team == 2 ? "\x074D7942" : "\x07FF4040");
+
+		// Once again loop all commands and check their matching
+		for (new i = 0; i < sizeof(class_commands); i++)
 		{
-			case 1: if (GetClientHealth(client) < 100) return Plugin_Handled;
-			case 2: return Plugin_Handled;
+			// This thing is needed to convert commands as a integer
+			if (StrEqual(command, class_commands[i]))
+			{
+				// And here we can realize that for: 1) Correctly setting player class 2) Showing that player will respawn as a desired class
+				new desiredclass = i - class_array[team];
+
+				// Block immediate re-spawning depends on mode
+				switch (GetConVarInt(blockchange_mode))
+				{
+					case 1: // Dont allow player to be respawned if player was being hurt
+					{
+						if (GetClientHealth(client) < 100)
+						{
+							// Notify client about respawning next time
+							PrintToChat(client, "\x01*You will respawn as %s%s", color, class_names[desiredclass]);
+							SetEntProp(client, Prop_Send, "m_iDesiredPlayerClass", desiredclass);
+							return Plugin_Handled;
+						}
+					}
+					case 2: // Dont allow player to respawn at all
+					{
+						PrintToChat(client, "\x01*You will respawn as %s%s", color, class_names[desiredclass]);
+
+						// Let's change only 'future class' depends on command, and block it
+						SetEntProp(client, Prop_Send, "m_iDesiredPlayerClass", desiredclass);
+						return Plugin_Handled;
+					}
+				}
+			}
 		}
 	}
-
-	// Continue, otherwise we will not respawn even
 	return Plugin_Continue;
-}
-
-/* IsPlayerNearSpawn()
- *
- * Checks if player is around respawn area.
- * ---------------------------------------------------------------------- */
-bool:IsPlayerNearSpawn(client)
-{
-	// When storing make sure you don't include the index then returns the client's origin vector
-	decl Float:distance[3];
-	GetClientAbsOrigin(client, distance);
-
-	// Since info_player_allies = 0 and info_player_axis equal to 1, subtract team offset to get team spawn points for a player
-	new team = GetClientTeam(client) - 2;
-
-	for (new i = 0; i < sp_count[team]; i++)
-	{
-		// Yeah player is within a respawn area - so check if distance from last spawn point is more than 500 units (float)
-		if (GetVectorDistance(spawnposition[team][i], distance) <= 500.0)
-			return true;
-	}
-
-	return false;
 }
