@@ -2,7 +2,7 @@
 * DoD:S Block Class Respawn by Root
 *
 * Description:
-*   Prevents immediately re-spawning after changing player class within a spawn area (always or when player is hurt).
+*   Prevents immediately re-spawning after changing player class within a spawn area (always, when player is hurt or has thrown a grenade).
 *
 * Version 3.0
 * Changelog & more info at http://goo.gl/4nKhJ
@@ -11,20 +11,38 @@
 #pragma semicolon 1
 
 // ====[ CONSTANTS ]======================================================================
-#define PLUGIN_NAME     "DoD:S Block Class Respawn"
-#define PLUGIN_VERSION  "3.0"
+#define PLUGIN_NAME    "DoD:S Block Class Respawn"
+#define PLUGIN_VERSION "3.0"
+
+#define CLASS_INIT     0
+#define MAX_CLASS      6
+#define DOD_MAXPLAYERS 33
+#define MAX_HEALTH     100
 
 // Define the GetEntProp condition for m_iDesiredPlayerClass netprop
 #define m_iDesiredPlayerClass(%1) (GetEntProp(%1, Prop_Send, "m_iDesiredPlayerClass"))
 
 enum
 {
-	CLASS_INIT = 0,
-	TEAM_ALLIES = 2,
-	TEAM_AXIS = 3,
-	TEAM_SIZE = 4,
-	MAX_CLASS = 6,
-	MAX_HEALTH = 100
+	TEAM_UNASSIGNED,
+	TEAM_SPECTATOR,
+	TEAM_ALLIES,
+	TEAM_AXIS,
+	TEAM_SIZE
+};
+
+enum
+{
+	Frag_US = 19,
+	Frag_GER,
+	Frag_US_Live,
+	Frag_GER_Live,
+	Smoke_US,
+	Smoke_GER,
+	Riflegren_US,
+	Riflegren_GER,
+	Riflegren_US_Live,
+	Riflegren_GER_Live
 };
 
 // ====[ VARIABLES ]======================================================================
@@ -33,14 +51,24 @@ static const String:block_cmds[][] = { "cls_random", "joinclass" },
 	String:axis_cmds[][]    = { "cls_k98",    "cls_mp40",  "cls_mp44", "cls_k98s",   "cls_mg42",  "cls_pschreck" },
 	String:allies_cvars[][] =
 {
-	"mp_limit_allies_rifleman", "mp_limit_allies_assault", "mp_limit_allies_support", "mp_limit_allies_sniper", "mp_limit_allies_mg", "mp_limit_allies_rocket"
+	"mp_limit_allies_rifleman",
+	"mp_limit_allies_assault",
+	"mp_limit_allies_support",
+	"mp_limit_allies_sniper",
+	"mp_limit_allies_mg",
+	"mp_limit_allies_rocket"
 },
 	String:axis_cvars[][] =
 {
-	"mp_limit_axis_rifleman", "mp_limit_axis_assault", "mp_limit_axis_support", "mp_limit_axis_sniper", "mp_limit_axis_mg", "mp_limit_axis_rocket"
+	"mp_limit_axis_rifleman",
+	"mp_limit_axis_assault",
+	"mp_limit_axis_support",
+	"mp_limit_axis_sniper",
+	"mp_limit_axis_mg",
+	"mp_limit_axis_rocket"
 };
 
-new	classlimit[TEAM_SIZE][MAX_CLASS], Handle:blockchange_mode = INVALID_HANDLE;
+new	classlimit[TEAM_SIZE][MAX_CLASS], Handle:blockchange_mode = INVALID_HANDLE, bool:ThrownGrenade[DOD_MAXPLAYERS + 1];
 
 // ====[ PLUGIN ]=========================================================================
 public Plugin:myinfo =
@@ -60,18 +88,17 @@ public Plugin:myinfo =
 public OnPluginStart()
 {
 	CreateConVar("dod_blockrespawn_version", PLUGIN_VERSION, PLUGIN_NAME, FCVAR_NOTIFY|FCVAR_DONTRECORD);
-	blockchange_mode = CreateConVar("dod_blockrespawn", "1", "Determines a mode when prevent player respawning after changing class in a spawn area:\n1 - Prevent respawning when player is hurt\n2 - Always prevent respawning", FCVAR_PLUGIN, true, 0.0, true, 2.0);
+	blockchange_mode = CreateConVar("dod_blockrespawn", "1", "Determines a mode when block player respawning after changing class:\n1 - Block respawning when player is hurt or has thrown a grenade\n2 - Always block respawning", FCVAR_PLUGIN, true, 0.0, true, 2.0);
 
-	// Commands to block
 	for (new i = 0; i < sizeof(block_cmds); i++)
 	{
+		// Using RegConsoleCmd to intercept is in poor practice for already existing commands
 		AddCommandListener(OtherClass, block_cmds[i]);
 	}
 
 	// Get all commands and classlimit ConVars for both teams
 	for (new i = 0; i < MAX_CLASS; i++)
 	{
-		// Using RegConsoleCmd to intercept is in poor practice for already existing commands, so hook those commands instead
 		AddCommandListener(OnAlliesClass, allies_cmds[i]);
 		AddCommandListener(OnAxisClass,   axis_cmds[i]);
 
@@ -83,6 +110,10 @@ public OnPluginStart()
 		HookConVarChange(FindConVar(allies_cvars[i]), UpdateClassLimits);
 		HookConVarChange(FindConVar(axis_cvars[i]),   UpdateClassLimits);
 	}
+
+	// Hook spawning and attacking events for every player
+	HookEvent("player_spawn", OnPlayerSpawn, EventHookMode_Post);
+	HookEvent("dod_stats_weapon_attack", OnPlayerAttack, EventHookMode_Post);
 }
 
 /* UpdateClasslimits()
@@ -96,6 +127,43 @@ public UpdateClassLimits(Handle:convar, const String:oldValue[], const String:ne
 		// When classlimit value is changed (for any team/any class), just re-init variables again
 		classlimit[TEAM_ALLIES][i] = GetConVarInt(FindConVar(allies_cvars[i]));
 		classlimit[TEAM_AXIS][i]   = GetConVarInt(FindConVar(axis_cvars[i]));
+	}
+}
+
+/* OnPlayerSpawn()
+ *
+ * Called when a player spawns.
+ * --------------------------------------------------------------------------- */
+public OnPlayerSpawn(Handle:event, const String:name[], bool:dontBroadcast)
+{
+	// Make sure player is not yet thrown a grenade
+	ThrownGrenade[GetClientOfUserId(GetEventInt(event, "userid"))] = false;
+}
+
+/* OnPlayerAttack()
+ *
+ * Called when a player attacks with a weapon.
+ * --------------------------------------------------------------------------- */
+public OnPlayerAttack(Handle:event, const String:name[], bool:dontBroadcast)
+{
+	switch (GetEventInt(event, "weapon"))
+	{
+		// Ignore live grenades - because those may be not friendly
+		case
+			Frag_US,
+			Frag_GER,
+			//Frag_US_Live,
+			//Frag_GER_Live,
+			Smoke_US,
+			Smoke_GER,
+			Riflegren_US,
+			Riflegren_GER:
+			//Riflegren_US_Live,
+			//Riflegren_GER_Live,
+		{
+			// Player has thrown a grenade - set bool to true
+			ThrownGrenade[GetClientOfUserId(GetEventInt(event, "attacker"))] = true;
+		}
 	}
 }
 
@@ -129,10 +197,10 @@ public Action:OnAlliesClass(client, const String:command[], argc)
 		{
 			switch (mode)
 			{
-				case 1: // Dont allow player to be respawned if player was being hurt
+				case 1: // Dont allow player to be respawned if player was being hurt or has throw a grenade
 				{
-					// If player is having less than 100 hp, which is used on most servers - block command
-					if (GetClientHealth(client) < MAX_HEALTH)
+					// Dont respawn if player is having less than 100 hp
+					if ((GetClientHealth(client) < MAX_HEALTH) || (ThrownGrenade[client] == true))
 					{
 						PrintUserMessage(client, class, command);
 						SetEntProp(client, Prop_Send, "m_iDesiredPlayerClass", class);
@@ -141,7 +209,7 @@ public Action:OnAlliesClass(client, const String:command[], argc)
 				}
 				case 2:
 				{
-					// Change only 'future class' and block the command here
+					// Change only 'future class', and block the command
 					PrintUserMessage(client, class, command);
 					SetEntProp(client, Prop_Send, "m_iDesiredPlayerClass", class);
 					return Plugin_Handled;
@@ -160,14 +228,11 @@ public Action:OnAlliesClass(client, const String:command[], argc)
 public Action:OnAxisClass(client, const String:command[], argc)
 {
 	new mode = GetConVarInt(blockchange_mode);
-
-	// Get the client's team
 	new team = GetClientTeam(client);
 
 	// Check if player is using appropriate team class commands, or server may crash in some cases
 	if (IsPlayerAlive(client) && mode && team == TEAM_AXIS)
 	{
-		// Prepare class and convar values
 		new class = CLASS_INIT;
 		new cvar  = CLASS_INIT;
 
@@ -188,9 +253,9 @@ public Action:OnAxisClass(client, const String:command[], argc)
 			{
 				case 1:
 				{
-					if (GetClientHealth(client) < MAX_HEALTH)
+					if ((GetClientHealth(client) < MAX_HEALTH) || (ThrownGrenade[client] == true))
 					{
-						// Notify client about respawning as desired class next time
+						// Notify client about respawning next time
 						PrintUserMessage(client, class, command);
 						SetEntProp(client, Prop_Send, "m_iDesiredPlayerClass", class);
 						return Plugin_Handled;
@@ -216,7 +281,7 @@ public Action:OnAxisClass(client, const String:command[], argc)
  * --------------------------------------------------------------------------------------- */
 public Action:OtherClass(client, const String:command[], argc)
 {
-	// Block "joinclass/cls_random" commands if value != 0
+	// Block "joinclass/cls_random" commands if any mode is enabled
 	return GetConVarInt(blockchange_mode) ? Plugin_Handled : Plugin_Continue;
 }
 
@@ -226,11 +291,13 @@ public Action:OtherClass(client, const String:command[], argc)
  * --------------------------------------------------------------------------------------- */
 bool:IsClassAvailable(client, team, desiredclass, cvarnumber)
 {
+	// Initialize amount of classes
 	new class = CLASS_INIT;
 
 	// Lets loop through all clients from same team
 	for (new i = 1; i <= MaxClients; i++)
 	{
+		// Make sure all clients is in game!
 		if (IsClientInGame(i) && GetClientTeam(i) == team)
 		{
 			// If any classes which teammates are playing right now and matches with desired, increase amount of classes on every match
@@ -242,12 +309,11 @@ bool:IsClassAvailable(client, team, desiredclass, cvarnumber)
 	&& (classlimit[team][cvarnumber] > -1)              // if ConVar value limit is obviously initialized (more than -1)
 	|| (m_iDesiredPlayerClass(client)) == desiredclass) // or if current player's class is not a desired one
 	{
-		// Class is not available - reset amount of classes then
-		class = CLASS_INIT;
+		// Class is not available
 		return false;
 	}
 
-	// Otherwise player may use this class
+	// Otherwise player may select desired class
 	return true;
 }
 
@@ -261,20 +327,24 @@ PrintUserMessage(client, desiredclass, const String:command[])
 	if (m_iDesiredPlayerClass(client) != desiredclass)
 	{
 		// Start a simpler TextMsg usermessage for one client
-		new Handle:bf = StartMessageOne("TextMsg", client);
+		new Handle:TextMsg = StartMessageOne("TextMsg", client);
 
-		// Write into bitbuffer a "You will respawn as" phrase
-		decl String:buffer[128];
-		Format(buffer, sizeof(buffer), "\x03#Game_respawn_as");
-		BfWriteString(bf, buffer);
+		// Just to be safer
+		if (TextMsg != INVALID_HANDLE)
+		{
+			// Write into bitbuffer a stock phrase
+			decl String:buffer[128];
+			Format(buffer, sizeof(buffer), "\x03#Game_respawn_as");
+			BfWriteString(TextMsg, buffer);
 
-		// Also write class string to properly show as which class you will respawn
-		Format(buffer, sizeof(buffer), "#%s", command);
+			// Also write class string to properly show as which class you will respawn
+			Format(buffer, sizeof(buffer), "#%s", command);
 
-		// VALVe just called class names same as command names (check dod_english.txt), it makes name defines way easier
-		BfWriteString(bf, buffer);
+			// VALVe just called class names same as command names (check translations), it makes name defines way easier
+			BfWriteString(TextMsg, buffer);
 
-		// End this message. If message will not be sent, memory leak may occur, and all PrintToChat natives will not work!
-		EndMessage();
+			// End this message. If message will not be sent, memory leak may occur, and all PrintToChat natives will not work!
+			EndMessage();
+		}
 	}
 }
