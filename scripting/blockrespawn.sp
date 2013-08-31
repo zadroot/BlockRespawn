@@ -33,7 +33,9 @@ enum
 
 enum
 {
-	Frag_US = 19,
+	Bazooka = 17,
+	Pschreck,
+	Frag_US,
 	Frag_GER,
 	Frag_US_Live,
 	Frag_GER_Live,
@@ -88,7 +90,7 @@ public Plugin:myinfo =
 public OnPluginStart()
 {
 	CreateConVar("dod_blockrespawn_version", PLUGIN_VERSION, PLUGIN_NAME, FCVAR_NOTIFY|FCVAR_DONTRECORD);
-	blockchange_mode = CreateConVar("dod_blockrespawn", "1", "Determines a mode when block player respawning after changing class:\n1 - Block respawning when player is hurt or has thrown a grenade\n2 - Always block respawning", FCVAR_PLUGIN, true, 0.0, true, 2.0);
+	blockchange_mode = CreateConVar("dod_blockrespawn", "1", "Determines when block player respawning after changing class:\n1 - Block when player is hurt or have used any explosives\n2 - Always block respawning", FCVAR_PLUGIN, true, 0.0, true, 2.0);
 
 	for (new i = 0; i < sizeof(block_cmds); i++)
 	{
@@ -136,7 +138,7 @@ public UpdateClassLimits(Handle:convar, const String:oldValue[], const String:ne
  * --------------------------------------------------------------------------- */
 public OnPlayerSpawn(Handle:event, const String:name[], bool:dontBroadcast)
 {
-	// Make sure player is not yet thrown a grenade
+	// Reset
 	ThrownGrenade[GetClientOfUserId(GetEventInt(event, "userid"))] = false;
 }
 
@@ -148,8 +150,9 @@ public OnPlayerAttack(Handle:event, const String:name[], bool:dontBroadcast)
 {
 	switch (GetEventInt(event, "weapon"))
 	{
-		// Ignore live grenades - because those may be not friendly
-		case
+		case // Ignore live grenades - because those may be not friendly
+			Bazooka,
+			Pschreck,
 			Frag_US,
 			Frag_GER,
 			//Frag_US_Live,
@@ -161,7 +164,7 @@ public OnPlayerAttack(Handle:event, const String:name[], bool:dontBroadcast)
 			//Riflegren_US_Live,
 			//Riflegren_GER_Live,
 		{
-			// Player has thrown a grenade - set bool to true
+			// Player has used an explosive - set boolean
 			ThrownGrenade[GetClientOfUserId(GetEventInt(event, "attacker"))] = true;
 		}
 	}
@@ -199,7 +202,6 @@ public Action:OnAlliesClass(client, const String:command[], argc)
 			{
 				case 1: // Dont allow player to be respawned if player was being hurt or has throw a grenade
 				{
-					// Dont respawn if player is having less than 100 hp
 					if ((GetClientHealth(client) < MAX_HEALTH) || (ThrownGrenade[client] == true))
 					{
 						PrintUserMessage(client, class, command);
@@ -207,9 +209,8 @@ public Action:OnAlliesClass(client, const String:command[], argc)
 						return Plugin_Handled;
 					}
 				}
-				case 2:
+				case 2: // Change only 'future class', and block the command
 				{
-					// Change only 'future class', and block the command
 					PrintUserMessage(client, class, command);
 					SetEntProp(client, Prop_Send, "m_iDesiredPlayerClass", class);
 					return Plugin_Handled;
@@ -230,15 +231,15 @@ public Action:OnAxisClass(client, const String:command[], argc)
 	new mode = GetConVarInt(blockchange_mode);
 	new team = GetClientTeam(client);
 
-	// Check if player is using appropriate team class commands, or server may crash in some cases
 	if (IsPlayerAlive(client) && mode && team == TEAM_AXIS)
 	{
+		// Initialize class and cvar numbers
 		new class = CLASS_INIT;
 		new cvar  = CLASS_INIT;
 
 		for (new i = CLASS_INIT; i < sizeof(axis_cmds); i++)
 		{
-			// Assign a class and a convar numbers as same than command
+			// Now assign a class and a convar numbers as same than command
 			if (StrEqual(command, axis_cmds[i]))
 			{
 				class = cvar = i;
@@ -309,11 +310,10 @@ bool:IsClassAvailable(client, team, desiredclass, cvarnumber)
 	&& (classlimit[team][cvarnumber] > -1)              // if ConVar value limit is obviously initialized (more than -1)
 	|| (m_iDesiredPlayerClass(client)) == desiredclass) // or if current player's class is not a desired one
 	{
-		// Class is not available
 		return false;
 	}
 
-	// Otherwise player may select desired class
+	// Otherwise player may select/play as desired class
 	return true;
 }
 
@@ -323,7 +323,7 @@ bool:IsClassAvailable(client, team, desiredclass, cvarnumber)
  * --------------------------------------------------------------------------------------- */
 PrintUserMessage(client, desiredclass, const String:command[])
 {
-	// Don't print message if player selected desired class twice
+	// Don't print message if player selected desired class more than once
 	if (m_iDesiredPlayerClass(client) != desiredclass)
 	{
 		// Start a simpler TextMsg usermessage for one client
@@ -332,7 +332,7 @@ PrintUserMessage(client, desiredclass, const String:command[])
 		// Just to be safer
 		if (TextMsg != INVALID_HANDLE)
 		{
-			// Write into bitbuffer a stock phrase
+			// Write into a bitbuffer the stock 'You will respawn as' phrase
 			decl String:buffer[128];
 			Format(buffer, sizeof(buffer), "\x03#Game_respawn_as");
 			BfWriteString(TextMsg, buffer);
@@ -340,10 +340,10 @@ PrintUserMessage(client, desiredclass, const String:command[])
 			// Also write class string to properly show as which class you will respawn
 			Format(buffer, sizeof(buffer), "#%s", command);
 
-			// VALVe just called class names same as command names (check translations), it makes name defines way easier
+			// VALVe just called class names same as command names (check dod_english.txt or w/e), it makes name defines way easier
 			BfWriteString(TextMsg, buffer);
 
-			// End this message. If message will not be sent, memory leak may occur, and all PrintToChat natives will not work!
+			// End the TextMsg message. If message will not be sent, memory leak may occur - and PrintToChat* natives will not work
 			EndMessage();
 		}
 	}
