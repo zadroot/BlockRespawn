@@ -2,13 +2,11 @@
 * DoD:S Block Class Respawn by Root
 *
 * Description:
-*   Prevents immediately re-spawning after changing player class within a spawn area (always, when player is hurt or has thrown a grenade).
+*   Prevents immediately re-spawning after changing player class within a spawn area (always, when player is hurt or if player has thrown a grenade).
 *
 * Version 3.0
 * Changelog & more info at http://goo.gl/4nKhJ
 */
-
-#pragma semicolon 1
 
 // ====[ CONSTANTS ]======================================================================
 #define PLUGIN_NAME    "DoD:S Block Class Respawn"
@@ -80,7 +78,7 @@ public Plugin:myinfo =
 	description = "Prevents immediately re-spawning after changing player class within a spawn area",
 	version     = PLUGIN_VERSION,
 	url         = "http://dodsplugins.com/"
-};
+}
 
 
 /* OnPluginStart()
@@ -92,14 +90,14 @@ public OnPluginStart()
 	CreateConVar("dod_blockrespawn_version", PLUGIN_VERSION, PLUGIN_NAME, FCVAR_NOTIFY|FCVAR_DONTRECORD);
 	blockchange_mode = CreateConVar("dod_blockrespawn", "1", "Determines when block player respawning after changing class:\n1 - Block when player is hurt or have used any explosives\n2 - Always block respawning", FCVAR_PLUGIN, true, 0.0, true, 2.0);
 
-	for (new i = 0; i < sizeof(block_cmds); i++)
+	for (new i; i < sizeof(block_cmds); i++)
 	{
 		// Using RegConsoleCmd to intercept is in poor practice for already existing commands
 		AddCommandListener(OtherClass, block_cmds[i]);
 	}
 
 	// Get all commands and classlimit ConVars for both teams
-	for (new i = 0; i < MAX_CLASS; i++)
+	for (new i; i < MAX_CLASS; i++)
 	{
 		AddCommandListener(OnAlliesClass, allies_cmds[i]);
 		AddCommandListener(OnAxisClass,   axis_cmds[i]);
@@ -124,7 +122,7 @@ public OnPluginStart()
  * --------------------------------------------------------------------------------------- */
 public UpdateClassLimits(Handle:convar, const String:oldValue[], const String:newValue[])
 {
-	for (new i = 0; i < MAX_CLASS; i++)
+	for (new i; i < MAX_CLASS; i++)
 	{
 		// When classlimit value is changed (for any team/any class), just re-init variables again
 		classlimit[TEAM_ALLIES][i] = GetConVarInt(FindConVar(allies_cvars[i]));
@@ -138,7 +136,7 @@ public UpdateClassLimits(Handle:convar, const String:oldValue[], const String:ne
  * --------------------------------------------------------------------------- */
 public OnPlayerSpawn(Handle:event, const String:name[], bool:dontBroadcast)
 {
-	// Reset
+	// Reset boolean on respawn
 	ThrownGrenade[GetClientOfUserId(GetEventInt(event, "userid"))] = false;
 }
 
@@ -148,25 +146,10 @@ public OnPlayerSpawn(Handle:event, const String:name[], bool:dontBroadcast)
  * --------------------------------------------------------------------------- */
 public OnPlayerAttack(Handle:event, const String:name[], bool:dontBroadcast)
 {
-	switch (GetEventInt(event, "weapon"))
+	if (Bazooka <= GetEventInt(event, "weapon") <= Riflegren_GER)
 	{
-		case // Ignore live grenades - because those may be not friendly
-			Bazooka,
-			Pschreck,
-			Frag_US,
-			Frag_GER,
-			//Frag_US_Live,
-			//Frag_GER_Live,
-			Smoke_US,
-			Smoke_GER,
-			Riflegren_US,
-			Riflegren_GER:
-			//Riflegren_US_Live,
-			//Riflegren_GER_Live,
-		{
-			// Player has used an explosive - set boolean
-			ThrownGrenade[GetClientOfUserId(GetEventInt(event, "attacker"))] = true;
-		}
+		// Player has used an explosive - set the bool
+		ThrownGrenade[GetClientOfUserId(GetEventInt(event, "attacker"))] = true;
 	}
 }
 
@@ -186,7 +169,7 @@ public Action:OnAlliesClass(client, const String:command[], argc)
 		new cvar  = CLASS_INIT;
 
 		// Loop through available allies class commands
-		for (new i = CLASS_INIT; i < sizeof(allies_cmds); i++)
+		for (new i; i < sizeof(allies_cmds); i++)
 		{
 			if (StrEqual(command, allies_cmds[i]))
 			{
@@ -237,7 +220,7 @@ public Action:OnAxisClass(client, const String:command[], argc)
 		new class = CLASS_INIT;
 		new cvar  = CLASS_INIT;
 
-		for (new i = CLASS_INIT; i < sizeof(axis_cmds); i++)
+		for (new i; i < sizeof(axis_cmds); i++)
 		{
 			// Now assign a class and a convar numbers as same than command
 			if (StrEqual(command, axis_cmds[i]))
